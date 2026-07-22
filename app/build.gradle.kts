@@ -57,4 +57,13 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.7.7")
     implementation("androidx.compose.material:material-icons-extended")
 
+
+    // Retrofit（网络请求）
+    implementation("com.squareup.retrofit2:retrofit:2.9.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
+    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+
+    // DataStore（存储 Token）
+    implementation("androidx.datastore:datastore-preferences:1.1.0")
+
 }
