@@ -6,7 +6,9 @@ import com.example.chitu.data.remote.dto.LoginRequest
 import com.example.chitu.data.remote.dto.LoginResponse
 import com.example.chitu.data.remote.dto.RegisterData
 import com.example.chitu.data.remote.dto.RegisterRequest
+import com.example.chitu.data.remote.dto.TripSyncRequest
 import com.example.chitu.data.remote.dto.UpdateProfileRequest
+import com.example.chitu.data.remote.dto.UpdateSettingRequest
 import com.example.chitu.data.remote.dto.UserProfileResponse
 import com.example.chitu.data.remote.dto.UserSettingResponse
 import retrofit2.Response
@@ -49,4 +51,17 @@ interface AuthApi {
     suspend fun getSetting(
         @Header("Authorization") token: String
     ): ApiResponse<UserSettingResponse>
+
+    // 在 AuthApi 中添加
+    @PUT("/api/user/setting")
+    suspend fun updateSetting(
+        @Header("Authorization") token: String,
+        @Body request: UpdateSettingRequest
+    ): ApiResponse<Any>
+    // ✅ 同步行程
+    @POST("/api/trips/sync")
+    suspend fun syncTrip(
+        @Header("Authorization") token: String,
+        @Body request: TripSyncRequest
+    ): ApiResponse<Any>
 }

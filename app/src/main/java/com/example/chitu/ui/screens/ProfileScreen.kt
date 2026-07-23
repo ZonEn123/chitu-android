@@ -50,9 +50,6 @@ import androidx.compose.foundation.ScrollState
 // ============================================================
 
 private val ChituRed = Color(0xFFC62828)
-private val PageBackground = Color(0xFFFAFAFA)
-private val TextPrimary = Color(0xFF212121)
-private val TextSecondary = Color(0xFF757575)
 
 // ============================================================
 // ProfileScreen V2.0
@@ -103,7 +100,7 @@ fun ProfileScreen(
 
     Scaffold(
         modifier = Modifier.imePadding(),
-        containerColor = PageBackground,
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = {
@@ -151,7 +148,7 @@ fun ProfileScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = PageBackground
+                    containerColor = MaterialTheme.colorScheme.background
                 )
             )
         }
@@ -244,7 +241,7 @@ fun ProfileDialogs(
                     TextButton(onClick = { viewModel.cancelSave() }) {
                         Text(
                             text = "取消",
-                            color = TextSecondary
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -288,7 +285,7 @@ fun ProfileDialogs(
                         TextButton(onClick = { viewModel.cancelDiscard() }) {
                             Text(
                                 text = "取消",
-                                color = TextSecondary
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -324,7 +321,7 @@ fun ProfileDialogs(
                     TextButton(onClick = { viewModel.cancelSecurityReminder() }) {
                         Text(
                             text = "取消",
-                            color = TextSecondary
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -357,7 +354,7 @@ fun ProfileContent(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(PageBackground)
+            .background(MaterialTheme.colorScheme.background)
             .padding(horizontal = 20.dp)
             .padding(bottom = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -396,7 +393,7 @@ fun ProfileContent(
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
                 Column(
@@ -546,7 +543,7 @@ fun SecuritySection(
             Text(
                 text = "⚠️ 密保设置后不可修改，请牢记您的答案",
                 fontSize = 12.sp,
-                color = TextSecondary,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp)
             )
         }
@@ -562,7 +559,7 @@ fun SecuritySection(
             Text(
                 text = "密保",
                 fontSize = 15.sp,
-                color = TextSecondary
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
                 text = "未填写",
@@ -599,7 +596,7 @@ fun EditInfoRow(
         Text(
             text = label,
             fontSize = 15.sp,
-            color = TextSecondary,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(90.dp)
         )
 
@@ -614,7 +611,7 @@ fun EditInfoRow(
                 textStyle = MaterialTheme.typography.bodyMedium.copy(
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Medium,
-                    color = TextPrimary,
+                    color = MaterialTheme.colorScheme.onSurface,
                     textAlign = TextAlign.End
                 ),
                 modifier = Modifier
@@ -638,7 +635,7 @@ fun EditInfoRow(
                             Text(
                                 text = "请输入",
                                 fontSize = 15.sp,
-                                color = Color(0xFFAAAAAA),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.End
                             )
                         }
@@ -651,7 +648,7 @@ fun EditInfoRow(
                 text = value,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Medium,
-                color = TextPrimary,
+                color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.End
             )

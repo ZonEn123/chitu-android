@@ -76,4 +76,9 @@ dependencies {
     implementation("androidx.room:room-ktx:2.8.4")
     ksp("androidx.room:room-compiler:2.8.4")   // ✅ 2.7.0+ 修复了 suspend fun Unit 的 jvm signature V bug
 
+    // MpAndroidChart 图表库
+    implementation("com.github.PhilJay:MPAndroidChart:v3.1.0")
+
+    // ✅ WorkManager（兜底同步）
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
 }

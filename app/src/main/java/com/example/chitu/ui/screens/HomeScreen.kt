@@ -1,6 +1,10 @@
 package com.example.chitu.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -18,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.core.content.ContextCompat
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -35,10 +40,10 @@ import com.example.chitu.viewmodel.ProfileViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.shape.RoundedCornerShape
+import com.example.chitu.data.sync.SyncScheduler
 
 
 private val ChituRed = Color(0xFFC62828)
-private val PageBackground = Color(0xFFFAFAFA)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -77,6 +82,17 @@ fun HomeScreen(
 
     val uiState by profileViewModel.uiState.collectAsState()
 
+    // ✅ 定位权限请求 launcher（在点击"开始驾驶"时触发）
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { granted ->
+        if (granted.all { it.value }) {
+            drivingViewModel.startDriving(reminderInterval)
+        } else {
+            Toast.makeText(context, "需要定位权限才能开始驾驶", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     LaunchedEffect(Unit) {
         profileViewModel.loadSetting()
         profileViewModel.loadProfile()
@@ -87,7 +103,7 @@ fun HomeScreen(
     val drawerContent = @Composable {
         ModalDrawerSheet(
             modifier = Modifier.fillMaxWidth(0.85f),
-            drawerContainerColor = Color.White
+            drawerContainerColor = MaterialTheme.colorScheme.surface
         ) {
             Column(
                 modifier = Modifier
@@ -116,12 +132,12 @@ fun HomeScreen(
                             text = data.nickname ?: "未设置昵称",
                             fontSize = 20.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFF212121)
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
                             text = data.phone,
                             fontSize = 14.sp,
-                            color = Color(0xFF757575)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     else -> {
@@ -132,7 +148,7 @@ fun HomeScreen(
                                 .background(Color.Gray)
                         )
                         Spacer(modifier = Modifier.height(12.dp))
-                        Text("加载中...", color = Color.Gray)
+                        Text("加载中...", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
 
@@ -164,14 +180,25 @@ fun HomeScreen(
                     text = "驾驶统计",
                     onClick = {
                         scope.launch { drawerState.close() }
-                        Toast.makeText(context, "开发中", Toast.LENGTH_SHORT).show()
+                        navController.navigate("statistics")
                     }
                 )
                 DrawerMenuItem(
                     text = "系统设置",
                     onClick = {
                         scope.launch { drawerState.close() }
-                        Toast.makeText(context, "开发中", Toast.LENGTH_SHORT).show()
+                        navController.navigate("setting")
+                    }
+                )
+                // 在侧边栏菜单项中添加
+                DrawerMenuItem(
+                    text = "断网同步",
+                    onClick = {
+                        scope.launch {
+                            drawerState.close()
+                            SyncScheduler.triggerSyncNow(context)
+                            Toast.makeText(context, "同步任务已触发", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 )
 
@@ -222,34 +249,53 @@ fun HomeScreen(
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = PageBackground
+                        containerColor = MaterialTheme.colorScheme.background
                     )
                 )
             },
-            containerColor = PageBackground
+            containerColor = MaterialTheme.colorScheme.background
         ) { innerPadding ->
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
-                    .background(PageBackground)
-                    .padding(horizontal = 24.dp),
+                    .background(MaterialTheme.colorScheme.background)
+                    .padding(horizontal = 0.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Top
             ) {
-                Spacer(modifier = Modifier.height(15.dp))
+                //Spacer(modifier = Modifier.height(8.dp))
+
+                // ✅ 附近服务区入口图标（汉堡菜单正下方）
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Start
+                ) {
+                    IconButton(
+                        onClick = { navController.navigate("service_area") },
+                        modifier = Modifier
+                            .size(50.dp)
+                            .padding(start = 8.dp)
+                    ) {
+                        Text("\uD83D\uDDFA", fontSize = 24.sp)
+                    }
+                }
 
                 Text(
                     text = "赤兔",
                     fontSize = 42.sp,
                     fontWeight = FontWeight.Bold,
-                    color = ChituRed
+                    color = ChituRed,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = "货运千里，赤兔随行",
                     fontSize = 16.sp,
-                    color = Color(0xFF757575)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )
 
                 Spacer(modifier = Modifier.height(28.dp))
@@ -307,7 +353,21 @@ fun HomeScreen(
                                 )
                             )
                             .clickable {
-                                drivingViewModel.startDriving(reminderInterval)
+                                // 检查定位权限，未授权则先申请
+                                if (ContextCompat.checkSelfPermission(
+                                        context,
+                                        Manifest.permission.ACCESS_FINE_LOCATION
+                                    ) == PackageManager.PERMISSION_GRANTED
+                                ) {
+                                    drivingViewModel.startDriving(reminderInterval)
+                                } else {
+                                    locationPermissionLauncher.launch(
+                                        arrayOf(
+                                            Manifest.permission.ACCESS_FINE_LOCATION,
+                                            Manifest.permission.ACCESS_COARSE_LOCATION
+                                        )
+                                    )
+                                }
                             },
                         contentAlignment = Alignment.Center
                     ) {
@@ -370,7 +430,7 @@ fun DrawerMenuItem(
                 imageVector = icon,
                 contentDescription = null,
                 modifier = Modifier.size(24.dp),
-                tint = if (isBottom) ChituRed else Color(0xFF212121)
+                tint = if (isBottom) ChituRed else MaterialTheme.colorScheme.onSurface
             )
             Spacer(modifier = Modifier.width(16.dp))
         }
@@ -378,7 +438,7 @@ fun DrawerMenuItem(
             text = text,
             fontSize = 16.sp,
             fontWeight = if (isBottom) FontWeight.Normal else FontWeight.Medium,
-            color = if (isBottom) ChituRed else Color(0xFF212121)
+            color = if (isBottom) ChituRed else MaterialTheme.colorScheme.onSurface
         )
     }
 }
@@ -431,7 +491,7 @@ fun DrivingStatusCard(
             .fillMaxWidth()
             .padding(bottom = 32.dp),
         colors = CardDefaults.cardColors(
-            containerColor = Color.White
+            containerColor = MaterialTheme.colorScheme.surface
         ),
         elevation = CardDefaults.cardElevation(3.dp)  // ✅ 阴影降低
     ) {
@@ -472,7 +532,7 @@ fun DrivingStatusCard(
 
             Text(
                 text = "已驾驶时长",
-                color = Color.Gray,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 14.sp
             )
 
@@ -501,7 +561,7 @@ fun DrivingStatusCard(
                     Text(
                         text = "疲劳驾驶风险",
                         fontSize = 12.sp,
-                        color = Color.Gray
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
                         text = "${(progress * 100).toInt()}%",
@@ -518,7 +578,7 @@ fun DrivingStatusCard(
                     Text(
                         text = "预计提醒时间",
                         fontSize = 12.sp,
-                        color = Color.Gray
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
                         text = reminderTime,

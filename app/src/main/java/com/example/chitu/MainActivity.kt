@@ -7,26 +7,22 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.Text
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.example.chitu.ui.screens.HomeScreen
-import com.example.chitu.ui.screens.LoginScreen
-import com.example.chitu.ui.screens.ProfileScreen
-import com.example.chitu.ui.screens.RegisterScreen
-import com.example.chitu.ui.screens.SplashScreen
-import com.example.chitu.ui.screens.TripDetailScreen
-import com.example.chitu.ui.screens.TripListScreen
+import com.example.chitu.data.local.TokenManager
+import com.example.chitu.ui.screens.*
 import com.example.chitu.ui.theme.ChituTheme
+import com.example.chitu.viewmodel.SettingViewModel
 
 class MainActivity : ComponentActivity() {
 
@@ -39,7 +35,24 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         setContent {
-            ChituTheme {
+            // 使用 Activity 级别的 SettingViewModel（与 SettingScreen 共享）
+            val tokenManager = remember { TokenManager(applicationContext) }
+            val settingViewModel: SettingViewModel = viewModel(
+                factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+                    override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                        return SettingViewModel(applicationContext, tokenManager) as T
+                    }
+                }
+            )
+
+            val settings by settingViewModel.settings.collectAsState()
+            val darkMode = settings?.darkMode ?: 0
+
+            LaunchedEffect(Unit) {
+                settingViewModel.loadSettings()
+            }
+
+            ChituTheme(darkMode = darkMode) {
                 val navController = rememberNavController()
                 NavHost(navController = navController, startDestination = "splash") {
 
@@ -108,7 +121,7 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
-                    // 在 NavHost 中添加
+                    // 行程列表
                     composable("trip_list") {
                         TripListScreen(
                             navController = navController,
@@ -128,22 +141,36 @@ class MainActivity : ComponentActivity() {
                             onBack = { navController.popBackStack() }
                         )
                     }
+
+                    // 驾驶统计页面
+                    composable("statistics") {
+                        StatisticsScreen(
+                            navController = navController,
+                            onBack = { navController.popBackStack() }
+                        )
+                    }
+
+                    // ✅ 系统设置页面
+                    composable("setting") {
+                        SettingScreen(
+                            navController = navController,
+                            onBack = { navController.popBackStack() }
+                        )
+                    }
+
+                    // ✅ 附近服务区页面
+                    composable("service_area") {
+                        ServiceAreaScreen(
+                            navController = navController,
+                            onBack = { navController.popBackStack() }
+                        )
+                    }
                 }
             }
         }
 
-        // ✅ 请求通知权限（Android 13+）
+        // 请求通知权限（Android 13+）
         requestNotificationPermission()
-        // 在 MainActivity 的 onCreate 中添加
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            requestPermissions(
-                arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                ),
-                1001
-            )
-        }
     }
 
     private fun requestNotificationPermission() {
@@ -170,7 +197,7 @@ class MainActivity : ComponentActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == NOTIFICATION_PERMISSION_CODE) {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                // 权限已授予，通知会正常显示
+                // 权限已授予
             }
         }
     }

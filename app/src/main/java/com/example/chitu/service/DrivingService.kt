@@ -21,6 +21,8 @@ import com.amap.api.location.AMapLocationClientOption
 import com.amap.api.location.AMapLocationListener
 import com.example.chitu.MainActivity
 import com.example.chitu.data.local.DataStoreManager
+import com.example.chitu.data.local.TokenManager
+import com.example.chitu.data.sync.TripSyncManager
 import com.example.chitu.viewmodel.DrivingViewModel
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,6 +32,16 @@ import com.example.chitu.data.local.database.TripLogDatabase
 import com.example.chitu.data.local.entity.TripLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.UUID
+
+/** 定位状态快照 */
+data class LocationState(
+    val latitude: Double,
+    val longitude: Double,
+    val address: String,
+    val accuracy: Float,
+    val timestamp: Long
+)
 
 class DrivingService : Service() {
 
@@ -60,19 +72,30 @@ class DrivingService : Service() {
     // ==================== 行程定位 ====================
     private lateinit var locationClient: AMapLocationClient
 
-    private var startLatitude = 0.0
-    private var startLongitude = 0.0
+    /** 当前位置的可靠快照（每次有效回调更新） */
+    private var currentLocation: LocationState? = null
 
-    private var endLatitude = 0.0
-    private var endLongitude = 0.0
+    /** 起点快照（稳定确认后锁定） */
+    private var startFix: LocationState? = null
 
-    private var startLocation = "未知位置"
-    private var endLocation = "未知位置"
+    /** 终点快照（停止驾驶时缓存） */
+    private var endFix: LocationState? = null
+
+    /** 稳定定位计数器（累计连续 accuracy <= 50 的次数） */
+    private var stableFixCount = 0
+
+    /** 兼容旧字段引用（由 LocationState 提供） */
+    private val startLatitude: Double get() = startFix?.latitude ?: 0.0
+    private val startLongitude: Double get() = startFix?.longitude ?: 0.0
+    private val endLatitude: Double get() = endFix?.latitude ?: 0.0
+    private val endLongitude: Double get() = endFix?.longitude ?: 0.0
+    private val startLocation: String get() = startFix?.address ?: lastValidAddress
+    private val endLocation: String get() = endFix?.address ?: lastValidAddress
+
+    // 有效地址缓存（仅保存非空地址，防止空值覆盖）
+    private var lastValidAddress = "未知位置"
 
     private var totalDistance = 0f
-
-    private var lastLatitude = 0.0
-    private var lastLongitude = 0.0
 
     private var isFirstLocation = true
 
@@ -81,6 +104,11 @@ class DrivingService : Service() {
         private const val CHANNEL_ID = "driving_channel"
         private const val NOTIFICATION_ID = 1001
         private const val FATIGUE_NOTIFICATION_ID = 2001
+
+        // 连续稳定定位确认次数
+        private const val REQUIRED_STABLE_FIXES = 3
+        // 停止驾驶时等待主动定位的超时时间
+        private const val LOCATION_TIMEOUT_MS = 3000L
 
         const val ACTION_START = "ACTION_START"
         const val ACTION_STOP = "ACTION_STOP"
@@ -236,75 +264,88 @@ class DrivingService : Service() {
     private val locationListener =
         AMapLocationListener { location ->
 
-            // 过滤无效定位 + GPS 精度差（室内测试放宽到50m，室外稳定后通常在10m以内）
-            if (location != null && location.errorCode == 0 && location.accuracy < 50) {
-
-                val lat = location.latitude
-                val lng = location.longitude
-
-                if (isFirstLocation) {
-
-                    startLatitude = lat
-                    startLongitude = lng
-
-                    startLocation =
-                        location.address ?: "未知位置"
-
-                    lastLatitude = lat
-                    lastLongitude = lng
-
-                    isFirstLocation = false
-
-                    Log.d(
-                        TAG,
-                        "记录起点:$startLocation 精度:${location.accuracy}米"
-                    )
-
-
-                } else {
-
-                    if (lastLatitude != 0.0) {
-
-                        val distance =
-                            calculateDistance(
-                                lastLatitude,
-                                lastLongitude,
-                                lat,
-                                lng
-                            )
-
-                        // ✅ GPS 漂移过滤：丢弃 <5m 的抖动和 >100m 的异常跳点
-                        if (distance in 5f..100f) {
-                            totalDistance += distance
-
-                            Log.d(
-                                TAG,
-                                "有效移动:${distance}米 累计:${totalDistance}米"
-                            )
-                        } else {
-                            Log.d(
-                                TAG,
-                                "过滤GPS抖动:${distance}米 精度:${location.accuracy}米"
-                            )
-                        }
-                    }
-
-                    lastLatitude = lat
-                    lastLongitude = lng
-
-                    // 保存最新位置作为终点
-                    endLatitude = lat
-                    endLongitude = lng
-
-                    endLocation =
-                        location.address ?: "未知位置"
-                }
-            } else {
-                Log.d(
-                    TAG,
-                    "定位精度不足:${location?.accuracy}米 errorCode=${location?.errorCode}"
-                )
+            if (location == null) {
+                Log.w(TAG, "定位返回 null")
+                return@AMapLocationListener
             }
+
+            val errorCode = location.errorCode
+            if (errorCode != 0) {
+                val errorMsg = when (errorCode) {
+                    12 -> "GPS 未开启"
+                    32 -> "Key 无效"
+                    61 -> "网络定位失败"
+                    62 -> "服务器返回错误"
+                    63 -> "网络异常"
+                    161 -> "定位成功但无地址"
+                    else -> "未知错误"
+                }
+                Log.w(TAG, "定位失败: errorCode=$errorCode, $errorMsg, info=${location.errorInfo}")
+                return@AMapLocationListener
+            }
+
+            val lat = location.latitude
+            val lng = location.longitude
+            val address = location.address
+            val accuracy = location.accuracy
+
+            Log.d(
+                "LocationDebug",
+                "回调: 精度=${accuracy}米, 地址=$address, " +
+                        "lat=$lat, lng=$lng, errorCode=$errorCode"
+            )
+
+            // 1. 缓存非空地址（永不丢失）
+            if (!address.isNullOrBlank()) {
+                lastValidAddress = address
+            }
+
+            // 2. 创建本次定位快照
+            val locationState = LocationState(
+                latitude = lat,
+                longitude = lng,
+                address = lastValidAddress,
+                accuracy = accuracy,
+                timestamp = System.currentTimeMillis()
+            )
+            currentLocation = locationState
+
+            // 3. 稳定起点确认（连续 accuracy <= 50 才锁定）
+            if (startFix == null) {
+                if (accuracy <= 50f) {
+                    stableFixCount++
+                    Log.d(TAG, "稳定定位: $stableFixCount/$REQUIRED_STABLE_FIXES")
+
+                    if (stableFixCount >= REQUIRED_STABLE_FIXES) {
+                        startFix = locationState
+                        Log.d(
+                            "LocationDebug",
+                            "✅ 起点已稳定确认: ${startFix?.address}, " +
+                                    "纬度=${startFix?.latitude}, 精度=${startFix?.accuracy}米"
+                        )
+                    }
+                } else {
+                    stableFixCount = 0
+                    Log.d(TAG, "精度不足，重置稳定计数: ${accuracy}米")
+                }
+                return@AMapLocationListener
+            }
+
+            // 4. 后续定位：累计里程 + 更新终点
+            val fromLat = endFix?.latitude ?: startFix!!.latitude
+            val fromLng = endFix?.longitude ?: startFix!!.longitude
+            val distance = calculateDistance(fromLat, fromLng, lat, lng)
+
+            // 仅在精度 ≤ 50 时计算移动距离（过滤低精度漂移）
+            if (accuracy <= 50f && distance in 5f..100f) {
+                totalDistance += distance
+                Log.d(TAG, "有效移动:${distance}米 累计:${totalDistance}米")
+            } else {
+                Log.d(TAG, "过滤抖动/跳点:${distance}米 精度:${accuracy}米")
+            }
+
+            // 更新终点快照
+            endFix = locationState
         }
 
 
@@ -345,8 +386,12 @@ class DrivingService : Service() {
         // 初始化行程数据
         totalDistance = 0f
         isFirstLocation = true
-        startLocation = "未知位置"
-        endLocation = "未知位置"
+        stableFixCount = 0
+        currentLocation = null
+        startFix = null
+        endFix = null
+
+        Log.d(TAG, "📍 [开始驾驶] 行程定位已重置")
 
         serviceStartTime = System.currentTimeMillis()
         _startTimestamp.value = serviceStartTime
@@ -411,28 +456,63 @@ class DrivingService : Service() {
         val endTime = System.currentTimeMillis()
         val durationSeconds = ((endTime - serviceStartTime) / 1000).toInt()
 
+        // 生成客户端唯一ID（幂等同步用）
+        val clientId = UUID.randomUUID().toString()
+
+        // 地址兜底：防止空字符串入库
+        val finalStart = startLocation.ifBlank { "未知位置" }
+        val finalEnd = endLocation.ifBlank { "未知位置" }
+
         val tripLog = TripLog(
+            clientId = clientId,
             startTime = serviceStartTime,
             endTime = endTime,
             durationSeconds = durationSeconds,
-            startLocation = startLocation,
-            endLocation = endLocation,
+            startLocation = finalStart,
+            endLocation = finalEnd,
             distanceMeters = totalDistance,
-            tripStatus = 1,  // 已完成
+            tripStatus = 1,
             fatigueFlag = if (_hasAlerted.value) 1 else 0,
-            remark = ""
+            remark = "",
+            startLatitude = startLatitude,
+            startLongitude = startLongitude,
+            endLatitude = endLatitude,
+            endLongitude = endLongitude,
+            syncStatus = 0
         )
 
-        Log.d(TAG, "行程记录: $tripLog")
+        Log.d(TAG, "📦 行程记录: $tripLog")
 
-        // ✅ 保存到 Room 数据库
-        serviceScope.launch {
+        Log.d(
+            "LocationDebug",
+            "保存行程: startLocation=$startLocation, endLocation=$endLocation, " +
+                    "distance=$totalDistance, duration=$durationSeconds"
+        )
+
+        // ✅ 保存到 Room + 立即同步（使用独立协程，不绑定 Service 生命周期）
+        CoroutineScope(Dispatchers.IO).launch {
             try {
                 val db = TripLogDatabase.getInstance(this@DrivingService)
-                db.tripLogDao().insert(tripLog)
-                Log.d(TAG, "✅ 行程已保存到数据库")
+                val newId = db.tripLogDao().insert(tripLog)
+                tripLog.id = newId  // 手动写回 Room 生成的 ID
+                Log.d(TAG, "✅ 行程已保存到本地数据库, id=$newId")
+
+                // 立即尝试同步到云端
+                val tokenManager = TokenManager(this@DrivingService)
+                val token = tokenManager.getToken()
+                if (!token.isNullOrBlank()) {
+                    val syncManager = TripSyncManager(this@DrivingService)
+                    val success = syncManager.syncTripNow(token, tripLog)
+                    if (success) {
+                        Log.d(TAG, "✅ 行程已同步到云端")
+                    } else {
+                        Log.d(TAG, "⚠️ 行程同步失败，等待重试")
+                    }
+                } else {
+                    Log.d(TAG, "⚠️ 无 Token，暂不同步")
+                }
             } catch (e: Exception) {
-                Log.e(TAG, "❌ 保存行程失败", e)
+                Log.e(TAG, "❌ 保存或同步行程失败", e)
             }
         }
 
@@ -463,52 +543,68 @@ class DrivingService : Service() {
     private fun createFatigueNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
-                "fatigue_channel",
+                "fatigue_alert",
                 "疲劳驾驶提醒",
-                NotificationManager.IMPORTANCE_HIGH
+                NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "疲劳驾驶超时提醒"
-                enableVibration(true)
+                setSound(null, null)
+                enableVibration(false)
             }
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
 
-    private fun sendFatigueAlert() {
-        // 1. 震动（1000ms）
-        val vibrator = getSystemService(VIBRATOR_SERVICE) as Vibrator
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            vibrator.vibrate(VibrationEffect.createOneShot(1000, VibrationEffect.DEFAULT_AMPLITUDE))
-        } else {
-            vibrator.vibrate(1000)
-        }
-
-        // 2. 系统音效（默认通知铃声，播放 2 秒后自动释放）
+    private suspend fun sendFatigueAlert() {
+        // 从 DataStore 读取用户设置（带异常保护，防止协程崩溃导致提醒永久失效）
+        var soundEnabled = 1
+        var vibrationEnabled = 1
         try {
-            val defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-            val ringtone = RingtoneManager.getRingtone(this, defaultSoundUri)
-            ringtone?.let { r ->
-                r.play()
-                // 系统通知音一般 1~2 秒，延时后释放资源
-                serviceScope.launch {
-                    delay(2500L)
-                    r.stop()
-                    Log.d(TAG, "系统音效播放完成，资源已释放")
-                }
-            }
+            val dataStore = DataStoreManager(this)
+            soundEnabled = dataStore.getSoundEnabledOnce()
+            vibrationEnabled = dataStore.getVibrationEnabledOnce()
+            Log.d(TAG, "提醒设置 sound=$soundEnabled vibration=$vibrationEnabled")
         } catch (e: Exception) {
-            Log.e(TAG, "播放系统音效失败", e)
+            Log.e(TAG, "读取设置失败，使用默认值", e)
         }
 
-        // 3. 系统通知（需要通知权限）
-        //    Android 13+：如果用户拒绝了通知权限，只震动+音效，不弹通知
+        // 1. 震动（判断开关）
+        if (vibrationEnabled == 1) {
+            val vibrator = getSystemService(VIBRATOR_SERVICE) as Vibrator
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createOneShot(1000, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                vibrator.vibrate(1000)
+            }
+        }
+
+        // 2. 声音（独立控制，使用 Ringtone 播放，与通知完全分离）
+        if (soundEnabled == 1) {
+            try {
+                val defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                val ringtone = RingtoneManager.getRingtone(this, defaultSoundUri)
+                ringtone?.let { r ->
+                    r.play()
+                    serviceScope.launch {
+                        delay(2500L)
+                        r.stop()
+                        Log.d(TAG, "系统音效播放完成，资源已释放")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "播放系统音效失败", e)
+            }
+        }
+
+        // 3. 通知（永远发送，完全静音）
+        //    Android 13+：如果用户拒绝了通知权限，不弹通知
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(
                     this,
                     android.Manifest.permission.POST_NOTIFICATIONS
                 ) != PackageManager.PERMISSION_GRANTED
             ) {
-                Log.w(TAG, "无通知权限，跳过疲劳提醒通知（震动和音效已触发）")
+                Log.w(TAG, "无通知权限，跳过疲劳提醒通知")
                 return
             }
         }
@@ -520,7 +616,7 @@ class DrivingService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val notification = NotificationCompat.Builder(this, "fatigue_channel")
+        val notification = NotificationCompat.Builder(this, "fatigue_alert")
             .setContentTitle("⚠️ 疲劳驾驶提醒")
             .setContentText("您已连续驾驶超过设定时间，请立即停车休息！")
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
@@ -528,6 +624,7 @@ class DrivingService : Service() {
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
+            .setSilent(true)
             .build()
 
         NotificationManagerCompat.from(this).notify(FATIGUE_NOTIFICATION_ID, notification)

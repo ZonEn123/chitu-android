@@ -25,9 +25,6 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 private val ChituRed = Color(0xFFC62828)
-private val PageBackground = Color(0xFFFAFAFA)
-private val TextPrimary = Color(0xFF212121)
-private val TextSecondary = Color(0xFF757575)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -81,11 +78,11 @@ fun TripListScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = PageBackground
+                    containerColor = MaterialTheme.colorScheme.background
                 )
             )
         },
-        containerColor = PageBackground
+        containerColor = MaterialTheme.colorScheme.background
     ) { innerPadding ->
         when {
             isLoading -> {
@@ -112,13 +109,13 @@ fun TripListScreen(
                             text = "暂无行程记录",
                             fontSize = 20.sp,
                             fontWeight = FontWeight.Bold,
-                            color = TextPrimary
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = "开始你的第一次驾驶吧！",
                             fontSize = 14.sp,
-                            color = TextSecondary
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -137,13 +134,13 @@ fun TripListScreen(
                             text = "未找到匹配的行程",
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Medium,
-                            color = TextPrimary
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = "试试其他关键词",
                             fontSize = 14.sp,
-                            color = TextSecondary
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         TextButton(onClick = { searchQuery = "" }) {
@@ -170,8 +167,8 @@ fun TripListScreen(
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = ChituRed,
                             unfocusedBorderColor = Color.Gray,
-                            focusedTextColor = TextPrimary,
-                            unfocusedTextColor = TextPrimary,
+                            focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
                             focusedLabelColor = ChituRed,
                             unfocusedLabelColor = Color.Gray
                         ),
@@ -194,7 +191,7 @@ fun TripListScreen(
                     Text(
                         text = "共 ${filteredTrips.size} 条行程",
                         fontSize = 14.sp,
-                        color = TextSecondary,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
 
@@ -241,7 +238,7 @@ fun TripListItem(
             .fillMaxWidth()
             .clickable { onClick() },
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(
@@ -257,7 +254,7 @@ fun TripListItem(
                     text = startTimeStr,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Medium,
-                    color = TextPrimary
+                    color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
                     text = durationText,
@@ -276,19 +273,19 @@ fun TripListItem(
                 Text(
                     text = "📍 ${trip.startLocation.takeIf { it.isNotBlank() && it != "未知位置" } ?: "未知起点"}",
                     fontSize = 14.sp,
-                    color = TextSecondary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f)
                 )
                 Text(
                     text = "→",
                     fontSize = 14.sp,
-                    color = TextSecondary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 8.dp)
                 )
                 Text(
                     text = "🏁 ${trip.endLocation.takeIf { it.isNotBlank() && it != "未知位置" } ?: "未知终点"}",
                     fontSize = 14.sp,
-                    color = TextSecondary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -302,7 +299,7 @@ fun TripListItem(
                 Text(
                     text = "📏 $distanceText",
                     fontSize = 14.sp,
-                    color = TextSecondary
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 if (trip.fatigueFlag == 1) {
                     Text(
