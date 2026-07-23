@@ -8,6 +8,7 @@ import com.example.chitu.data.remote.dto.RegisterData
 import com.example.chitu.data.remote.dto.RegisterRequest
 import com.example.chitu.data.remote.dto.UpdateProfileRequest
 import com.example.chitu.data.remote.dto.UserProfileResponse
+import com.example.chitu.data.remote.dto.UserSettingResponse
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
@@ -43,4 +44,9 @@ interface AuthApi {
         @Header("Authorization") token: String,
         @Body request: UpdateProfileRequest
     ): ApiResponse<Any>
+
+    @GET("/api/user/setting")
+    suspend fun getSetting(
+        @Header("Authorization") token: String
+    ): ApiResponse<UserSettingResponse>
 }

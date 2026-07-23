@@ -31,12 +31,14 @@ class DrivingViewModel(
     val elapsedSeconds: StateFlow<Int> = serviceState.elapsedSeconds
     val startTimestamp: StateFlow<Long> = serviceState.startTimestamp
 
+
     /**
      * 开始驾驶
      */
-    fun startDriving() {
+    fun startDriving(reminderInterval: Int = 240) {
         val intent = Intent(context, DrivingService::class.java).apply {
             action = DrivingService.ACTION_START
+            putExtra("reminder_interval", reminderInterval)
         }
         context.startForegroundService(intent)
     }

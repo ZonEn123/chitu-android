@@ -34,6 +34,8 @@ import com.example.chitu.viewmodel.ProfileUiState
 import com.example.chitu.viewmodel.ProfileViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.shape.RoundedCornerShape
+
 
 private val ChituRed = Color(0xFFC62828)
 private val PageBackground = Color(0xFFFAFAFA)
@@ -60,6 +62,8 @@ fun HomeScreen(
     val isDriving by drivingViewModel.isDriving.collectAsState()
     val elapsedSeconds by drivingViewModel.elapsedSeconds.collectAsState()
 
+
+
     val profileViewModel: ProfileViewModel = viewModel(
         factory = object : ViewModelProvider.Factory {
             override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
@@ -67,9 +71,14 @@ fun HomeScreen(
             }
         }
     )
+    // ✅ 使用 collectAsState() 监听 UserSetting 变化（非空默认值）
+    val setting by profileViewModel.settingState.collectAsState()
+    val reminderInterval = setting.reminderInterval
+
     val uiState by profileViewModel.uiState.collectAsState()
 
     LaunchedEffect(Unit) {
+        profileViewModel.loadSetting()
         profileViewModel.loadProfile()
         drivingViewModel.checkAndRestoreDriving()
     }
@@ -148,7 +157,7 @@ fun HomeScreen(
                     text = "行程日志",
                     onClick = {
                         scope.launch { drawerState.close() }
-                        Toast.makeText(context, "开发中", Toast.LENGTH_SHORT).show()
+                        navController.navigate("trip_list")
                     }
                 )
                 DrawerMenuItem(
@@ -228,7 +237,7 @@ fun HomeScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Top
             ) {
-                Spacer(modifier = Modifier.height(40.dp))
+                Spacer(modifier = Modifier.height(15.dp))
 
                 Text(
                     text = "赤兔",
@@ -243,7 +252,7 @@ fun HomeScreen(
                     color = Color(0xFF757575)
                 )
 
-                Spacer(modifier = Modifier.height(60.dp))
+                Spacer(modifier = Modifier.height(28.dp))
 
                 // ====================================================
                 // 按钮区域（完全不变）
@@ -298,7 +307,7 @@ fun HomeScreen(
                                 )
                             )
                             .clickable {
-                                drivingViewModel.startDriving()
+                                drivingViewModel.startDriving(reminderInterval)
                             },
                         contentAlignment = Alignment.Center
                     ) {
@@ -331,7 +340,8 @@ fun HomeScreen(
                 if (isDriving) {
                     DrivingStatusCard(
                         elapsedSeconds = elapsedSeconds,
-                        formatTime = drivingViewModel::formatTime
+                        formatTime = drivingViewModel::formatTime,
+                        fatigueLimitMinutes = reminderInterval   // ✅ 传递用户自定义阈值
                     )
                 }
             }
@@ -380,12 +390,41 @@ fun DrawerMenuItem(
 @Composable
 fun DrivingStatusCard(
     elapsedSeconds: Int,
-    formatTime: (Int) -> String
+    formatTime: (Int) -> String,
+    fatigueLimitMinutes: Int = 240   // ✅ 新增参数
 ) {
-    // 4 小时疲劳驾驶阈值
-    val fatigueLimit = 4 * 60 * 60
+    // ✅ 使用用户自定义阈值（分钟 → 秒）
+    val fatigueLimit = fatigueLimitMinutes * 60
     val progress = (elapsedSeconds.toFloat() / fatigueLimit).coerceIn(0f, 1f)
     val remain = (fatigueLimit - elapsedSeconds).coerceAtLeast(0)
+
+    // ✅ 动态阈值：基于用户设置的疲劳提醒时间
+    //    normalLimit = 50%  正常驾驶区间
+    //    warningLimit = 75%  注意休息区间
+    val normalLimit = (fatigueLimit * 0.5).toInt()
+    val warningLimit = (fatigueLimit * 0.75).toInt()
+
+    // ✅ 驾驶状态文字 + 颜色（完全基于用户自定义阈值）
+    val (statusText, statusColor) = when {
+        elapsedSeconds < normalLimit ->
+            "正常驾驶" to Color(0xFF2E7D32)
+
+        elapsedSeconds < warningLimit ->
+            "注意休息" to Color(0xFFF9A825)
+
+        elapsedSeconds < fatigueLimit ->
+            "即将疲劳驾驶" to Color(0xFFFB8C00)
+
+        else ->
+            "请立即停车休息" to Color(0xFFD32F2F)
+    }
+
+    // ✅ 预计提醒时间
+    val reminderTime = remember(remain) {
+        java.time.LocalTime.now()
+            .plusSeconds(remain.toLong())
+            .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
+    }
 
     Card(
         modifier = Modifier
@@ -394,18 +433,33 @@ fun DrivingStatusCard(
         colors = CardDefaults.cardColors(
             containerColor = Color.White
         ),
-        elevation = CardDefaults.cardElevation(6.dp)
+        elevation = CardDefaults.cardElevation(3.dp)  // ✅ 阴影降低
     ) {
         Column(
             modifier = Modifier.padding(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(
-                text = "🚛 驾驶中",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                color = ChituRed
-            )
+            // ✅ 状态文字（动态颜色）
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(statusColor)
+                )
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                Text(
+                    text = statusText,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = statusColor
+                )
+            }
 
             Spacer(modifier = Modifier.height(12.dp))
 
@@ -424,32 +478,55 @@ fun DrivingStatusCard(
 
             Spacer(modifier = Modifier.height(20.dp))
 
+            // ✅ 胶囊进度条（颜色随状态变化）
             LinearProgressIndicator(
                 progress = { progress },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(8.dp),
-                color = Color(0xFFFF9800),
+                    .height(10.dp)
+                    .clip(RoundedCornerShape(50)),
+                color = statusColor,
                 trackColor = Color(0xFFEAEAEA)
             )
 
             Spacer(modifier = Modifier.height(12.dp))
 
+            // ✅ 底部左右信息
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(
-                    text = "疲劳驾驶进度 ${(progress * 100).toInt()}%",
-                    color = Color.Gray,
-                    fontSize = 13.sp
-                )
-                Text(
-                    text = "剩余 ${formatTime(remain)}",
-                    color = ChituRed,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 13.sp
-                )
+                // 左侧：疲劳驾驶风险
+                Column {
+                    Text(
+                        text = "疲劳驾驶风险",
+                        fontSize = 12.sp,
+                        color = Color.Gray
+                    )
+                    Text(
+                        text = "${(progress * 100).toInt()}%",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = statusColor
+                    )
+                }
+
+                // 右侧：预计提醒时间
+                Column(
+                    horizontalAlignment = Alignment.End
+                ) {
+                    Text(
+                        text = "预计提醒时间",
+                        fontSize = 12.sp,
+                        color = Color.Gray
+                    )
+                    Text(
+                        text = reminderTime,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = statusColor
+                    )
+                }
             }
         }
     }

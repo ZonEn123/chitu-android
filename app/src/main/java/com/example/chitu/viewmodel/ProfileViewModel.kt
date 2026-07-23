@@ -1,6 +1,7 @@
 package com.example.chitu.viewmodel
 
 import android.content.Context
+import android.util.Log
 import android.widget.Toast
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -8,6 +9,7 @@ import com.example.chitu.data.local.TokenManager
 import com.example.chitu.data.remote.RetrofitClient
 import com.example.chitu.data.remote.dto.UpdateProfileRequest
 import com.example.chitu.data.remote.dto.UserProfileResponse
+import com.example.chitu.data.remote.dto.UserSettingResponse
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -65,6 +67,49 @@ fun UserProfileResponse.isSecuritySet(): Boolean {
 class ProfileViewModel(
     private val tokenManager: TokenManager
 ) : ViewModel() {
+
+    // ========================================================
+    // 用户设置状态
+    // ========================================================
+
+    private val _settingState = MutableStateFlow(
+        UserSettingResponse(
+            darkMode = 0,
+            soundEnabled = 1,
+            vibrationEnabled = 1,
+            reminderInterval = 240
+        )
+    )
+    val settingState: StateFlow<UserSettingResponse> = _settingState.asStateFlow()
+
+    // ========================================================
+    // 加载用户设置
+    // ========================================================
+
+    fun loadSetting() {
+        Log.d("ProfileViewModel", "loadSetting: 开始获取用户设置")
+        viewModelScope.launch {
+            val token = tokenManager.getToken()
+            Log.d("ProfileViewModel", "loadSetting: token=${if (token.isNullOrBlank()) "null/empty" else "存在"}")
+            if (token.isNullOrBlank()) {
+                Log.w("ProfileViewModel", "loadSetting: token为空，跳过")
+                return@launch
+            }
+
+            try {
+                val response = RetrofitClient.authApi.getSetting("Bearer $token")
+                Log.d("ProfileViewModel", "loadSetting: 响应 code=${response.code} data=${response.data}")
+                if (response.code == 200 && response.data != null) {
+                    Log.d("ProfileViewModel", "loadSetting: 成功, reminderInterval=${response.data.reminderInterval}")
+                    _settingState.value = response.data
+                } else {
+                    Log.w("ProfileViewModel", "loadSetting: 业务失败, code=${response.code} message=${response.message}")
+                }
+            } catch (e: Exception) {
+                Log.e("ProfileViewModel", "loadSetting: 网络/解析异常", e)
+            }
+        }
+    }
 
     // ========================================================
     // UI状态

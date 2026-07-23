@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    id("com.google.devtools.ksp")  // ✅ 添加 KSP（不需要写版本，从项目级继承）
 }
 
 android {
@@ -65,5 +66,14 @@ dependencies {
 
     // DataStore（存储 Token）
     implementation("androidx.datastore:datastore-preferences:1.1.0")
+
+    // ✅ 高德地图定位 SDK
+    implementation("com.amap.api:location:6.4.5")
+    implementation("androidx.core:core-ktx:1.12.0")
+
+// ✅ Room（使用 ksp 而不是 kapt）
+    implementation("androidx.room:room-runtime:2.8.4")
+    implementation("androidx.room:room-ktx:2.8.4")
+    ksp("androidx.room:room-compiler:2.8.4")   // ✅ 2.7.0+ 修复了 suspend fun Unit 的 jvm signature V bug
 
 }

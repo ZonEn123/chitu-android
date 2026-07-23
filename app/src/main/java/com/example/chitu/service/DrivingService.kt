@@ -7,12 +7,18 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.RingtoneManager
 import android.os.Build
 import android.os.IBinder
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import com.amap.api.location.AMapLocationClient
+import com.amap.api.location.AMapLocationClientOption
+import com.amap.api.location.AMapLocationListener
 import com.example.chitu.MainActivity
 import com.example.chitu.data.local.DataStoreManager
 import com.example.chitu.viewmodel.DrivingViewModel
@@ -20,6 +26,10 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import com.example.chitu.data.local.database.TripLogDatabase
+import com.example.chitu.data.local.entity.TripLog
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class DrivingService : Service() {
 
@@ -43,10 +53,34 @@ class DrivingService : Service() {
     // Service 专用协程作用域，避免协程泄漏
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    // ✅ 疲劳提醒相关
+    private var _hasAlerted = MutableStateFlow(false)
+    private var fatigueLimitSeconds: Int = 240 * 60  // 会被用户设置覆盖
+
+    // ==================== 行程定位 ====================
+    private lateinit var locationClient: AMapLocationClient
+
+    private var startLatitude = 0.0
+    private var startLongitude = 0.0
+
+    private var endLatitude = 0.0
+    private var endLongitude = 0.0
+
+    private var startLocation = "未知位置"
+    private var endLocation = "未知位置"
+
+    private var totalDistance = 0f
+
+    private var lastLatitude = 0.0
+    private var lastLongitude = 0.0
+
+    private var isFirstLocation = true
+
     companion object {
         private const val TAG = "DrivingService"
         private const val CHANNEL_ID = "driving_channel"
         private const val NOTIFICATION_ID = 1001
+        private const val FATIGUE_NOTIFICATION_ID = 2001
 
         const val ACTION_START = "ACTION_START"
         const val ACTION_STOP = "ACTION_STOP"
@@ -59,6 +93,8 @@ class DrivingService : Service() {
         super.onCreate()
         Log.d(TAG, "onCreate: 服务创建")
         createNotificationChannel()
+        createFatigueNotificationChannel()
+        // 定位不在这里初始化，在 startDriving 中按需启动
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -66,6 +102,9 @@ class DrivingService : Service() {
         when (intent?.action) {
             ACTION_START -> {
                 Log.d(TAG, "收到 ACTION_START，开始驾驶")
+                // ✅ 从 Intent 读取用户设置的疲劳阈值
+                fatigueLimitSeconds = intent.getIntExtra("reminder_interval", 240) * 60
+                Log.d(TAG, "疲劳阈值: ${fatigueLimitSeconds / 60} 分钟")
                 startDriving()
             }
             ACTION_STOP -> {
@@ -74,6 +113,8 @@ class DrivingService : Service() {
             }
             ACTION_RESTORE -> {
                 Log.d(TAG, "收到 ACTION_RESTORE，恢复驾驶状态")
+                // ✅ 恢复时也读取阈值
+                fatigueLimitSeconds = intent.getIntExtra("reminder_interval", 240) * 60
                 serviceScope.launch {
                     restoreDrivingState()
                 }
@@ -96,6 +137,11 @@ class DrivingService : Service() {
         timerJob?.cancel()
         timerJob = null
         serviceScope.cancel()
+        // 如果定位已初始化，停止定位
+        if (::locationClient.isInitialized) {
+            locationClient.stopLocation()
+            locationClient.onDestroy()
+        }
     }
 
     // ==================== 恢复驾驶状态 ====================
@@ -108,6 +154,7 @@ class DrivingService : Service() {
             serviceStartTime = timestamp
             _startTimestamp.value = timestamp
             _isDriving.value = true
+            _hasAlerted.value = false  // ✅ 重置提醒标志
 
             // 计算已过去的时间
             val elapsed = (System.currentTimeMillis() - timestamp) / 1000
@@ -139,12 +186,151 @@ class DrivingService : Service() {
                     )
 
                     updateNotification(elapsed.toInt())
+
+                    // ✅ 疲劳驾驶提醒检查（恢复后也要检查）
+                    if (elapsed >= fatigueLimitSeconds && !_hasAlerted.value) {
+                        _hasAlerted.value = true
+                        Log.d(TAG, "⚠️ 恢复后触发疲劳驾驶提醒！已驾驶 ${elapsed / 60} 分钟")
+                        sendFatigueAlert()
+                    }
+
                     delay(1000L)
                 }
             }
         } else {
             Log.d(TAG, "没有驾驶记录，无需恢复（timestamp=$timestamp）")
         }
+    }
+
+    // ==================== 定位 ====================
+
+    private fun initLocation() {
+
+        locationClient = AMapLocationClient(applicationContext)
+
+        val option = AMapLocationClientOption().apply {
+
+            locationMode =
+                AMapLocationClientOption.AMapLocationMode.Hight_Accuracy
+
+            interval = 2000
+
+            isNeedAddress = true
+
+            isOnceLocation = false
+        }
+
+
+        locationClient.setLocationOption(option)
+
+        locationClient.setLocationListener(locationListener)
+
+        locationClient.startLocation()
+
+
+        Log.d(TAG, "定位启动")
+    }
+
+
+
+    private val locationListener =
+        AMapLocationListener { location ->
+
+            // 过滤无效定位 + GPS 精度差（室内测试放宽到50m，室外稳定后通常在10m以内）
+            if (location != null && location.errorCode == 0 && location.accuracy < 50) {
+
+                val lat = location.latitude
+                val lng = location.longitude
+
+                if (isFirstLocation) {
+
+                    startLatitude = lat
+                    startLongitude = lng
+
+                    startLocation =
+                        location.address ?: "未知位置"
+
+                    lastLatitude = lat
+                    lastLongitude = lng
+
+                    isFirstLocation = false
+
+                    Log.d(
+                        TAG,
+                        "记录起点:$startLocation 精度:${location.accuracy}米"
+                    )
+
+
+                } else {
+
+                    if (lastLatitude != 0.0) {
+
+                        val distance =
+                            calculateDistance(
+                                lastLatitude,
+                                lastLongitude,
+                                lat,
+                                lng
+                            )
+
+                        // ✅ GPS 漂移过滤：丢弃 <5m 的抖动和 >100m 的异常跳点
+                        if (distance in 5f..100f) {
+                            totalDistance += distance
+
+                            Log.d(
+                                TAG,
+                                "有效移动:${distance}米 累计:${totalDistance}米"
+                            )
+                        } else {
+                            Log.d(
+                                TAG,
+                                "过滤GPS抖动:${distance}米 精度:${location.accuracy}米"
+                            )
+                        }
+                    }
+
+                    lastLatitude = lat
+                    lastLongitude = lng
+
+                    // 保存最新位置作为终点
+                    endLatitude = lat
+                    endLongitude = lng
+
+                    endLocation =
+                        location.address ?: "未知位置"
+                }
+            } else {
+                Log.d(
+                    TAG,
+                    "定位精度不足:${location?.accuracy}米 errorCode=${location?.errorCode}"
+                )
+            }
+        }
+
+
+
+    private fun calculateDistance(
+        lat1: Double,
+        lng1: Double,
+        lat2: Double,
+        lng2: Double
+    ): Float {
+
+
+        val result = FloatArray(1)
+
+
+        android.location.Location.distanceBetween(
+            lat1,
+            lng1,
+            lat2,
+            lng2,
+            result
+        )
+
+
+        return result[0]
+
     }
 
     // ==================== 核心业务 ====================
@@ -156,10 +342,22 @@ class DrivingService : Service() {
             return
         }
 
+        // 初始化行程数据
+        totalDistance = 0f
+        isFirstLocation = true
+        startLocation = "未知位置"
+        endLocation = "未知位置"
+
         serviceStartTime = System.currentTimeMillis()
         _startTimestamp.value = serviceStartTime
         _isDriving.value = true
         _elapsedSeconds.value = 0
+        _hasAlerted.value = false  // ✅ 重置疲劳提醒标志
+
+        // ✅ 启动定位（如果尚未初始化）
+        if (!::locationClient.isInitialized) {
+            initLocation()
+        }
 
         // ✅ 保存到 DataStore
         serviceScope.launch {
@@ -189,6 +387,14 @@ class DrivingService : Service() {
                 )
 
                 updateNotification(elapsed.toInt())
+
+                // ✅ 疲劳驾驶提醒检查
+                if (elapsed >= fatigueLimitSeconds && !_hasAlerted.value) {
+                    _hasAlerted.value = true
+                    Log.d(TAG, "⚠️ 触发疲劳驾驶提醒！已驾驶 ${elapsed / 60} 分钟")
+                    sendFatigueAlert()
+                }
+
                 delay(1000L)
             }
         }
@@ -197,14 +403,47 @@ class DrivingService : Service() {
     private fun stopDriving() {
         if (!_isDriving.value) return
 
+        if (::locationClient.isInitialized) {
+            locationClient.stopLocation()
+        }
+
+        // ✅ 组装行程数据
+        val endTime = System.currentTimeMillis()
+        val durationSeconds = ((endTime - serviceStartTime) / 1000).toInt()
+
+        val tripLog = TripLog(
+            startTime = serviceStartTime,
+            endTime = endTime,
+            durationSeconds = durationSeconds,
+            startLocation = startLocation,
+            endLocation = endLocation,
+            distanceMeters = totalDistance,
+            tripStatus = 1,  // 已完成
+            fatigueFlag = if (_hasAlerted.value) 1 else 0,
+            remark = ""
+        )
+
+        Log.d(TAG, "行程记录: $tripLog")
+
+        // ✅ 保存到 Room 数据库
+        serviceScope.launch {
+            try {
+                val db = TripLogDatabase.getInstance(this@DrivingService)
+                db.tripLogDao().insert(tripLog)
+                Log.d(TAG, "✅ 行程已保存到数据库")
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ 保存行程失败", e)
+            }
+        }
+
         timerJob?.cancel()
         timerJob = null
 
         _isDriving.value = false
         _elapsedSeconds.value = 0
         _startTimestamp.value = 0L
+        _hasAlerted.value = false
 
-        // ✅ 清除 DataStore
         serviceScope.launch {
             dataStore.clearStartTimestamp()
         }
@@ -217,6 +456,81 @@ class DrivingService : Service() {
 
         stopForeground(true)
         stopSelf()
+    }
+
+    // ==================== 疲劳提醒 ====================
+
+    private fun createFatigueNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                "fatigue_channel",
+                "疲劳驾驶提醒",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "疲劳驾驶超时提醒"
+                enableVibration(true)
+            }
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        }
+    }
+
+    private fun sendFatigueAlert() {
+        // 1. 震动（1000ms）
+        val vibrator = getSystemService(VIBRATOR_SERVICE) as Vibrator
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            vibrator.vibrate(VibrationEffect.createOneShot(1000, VibrationEffect.DEFAULT_AMPLITUDE))
+        } else {
+            vibrator.vibrate(1000)
+        }
+
+        // 2. 系统音效（默认通知铃声，播放 2 秒后自动释放）
+        try {
+            val defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            val ringtone = RingtoneManager.getRingtone(this, defaultSoundUri)
+            ringtone?.let { r ->
+                r.play()
+                // 系统通知音一般 1~2 秒，延时后释放资源
+                serviceScope.launch {
+                    delay(2500L)
+                    r.stop()
+                    Log.d(TAG, "系统音效播放完成，资源已释放")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "播放系统音效失败", e)
+        }
+
+        // 3. 系统通知（需要通知权限）
+        //    Android 13+：如果用户拒绝了通知权限，只震动+音效，不弹通知
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    android.Manifest.permission.POST_NOTIFICATIONS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                Log.w(TAG, "无通知权限，跳过疲劳提醒通知（震动和音效已触发）")
+                return
+            }
+        }
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(this, "fatigue_channel")
+            .setContentTitle("⚠️ 疲劳驾驶提醒")
+            .setContentText("您已连续驾驶超过设定时间，请立即停车休息！")
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .build()
+
+        NotificationManagerCompat.from(this).notify(FATIGUE_NOTIFICATION_ID, notification)
     }
 
     // ==================== 通知栏 ====================
