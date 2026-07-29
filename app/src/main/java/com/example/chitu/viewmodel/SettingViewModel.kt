@@ -22,8 +22,6 @@ class SettingViewModel(
     private val tokenManager: TokenManager
 ) : ViewModel() {
 
-    // ==================== 设置数据状态 ====================
-
     private val _settings = MutableStateFlow<UserSettingResponse?>(null)
     val settings: StateFlow<UserSettingResponse?> = _settings.asStateFlow()
 
@@ -33,32 +31,24 @@ class SettingViewModel(
     private val _saveState = MutableStateFlow<SaveState>(SaveState.Idle)
     val saveState: StateFlow<SaveState> = _saveState.asStateFlow()
 
-    // ==================== 加载设置 ====================
-
     fun loadSettings() {
         viewModelScope.launch {
             _isLoading.value = true
-
             val token = tokenManager.getToken()
             if (token.isNullOrBlank()) {
                 _isLoading.value = false
                 return@launch
             }
-
             try {
-                val response = RetrofitClient.authApi.getSetting("Bearer $token")
-                if (response.code == 200 && response.data != null) {
-                    _settings.value = response.data
+                val httpResponse = RetrofitClient.authApi.getSetting("Bearer $token")
+                val body = httpResponse.body()
+                if (body?.code == 200 && body.data != null) {
+                    _settings.value = body.data
                 }
-            } catch (e: Exception) {
-                // 静默失败，使用默认值
-            }
-
+            } catch (_: Exception) { }
             _isLoading.value = false
         }
     }
-
-    // ==================== 保存设置 ====================
 
     fun saveSetting(
         darkMode: Int? = null,
@@ -68,13 +58,11 @@ class SettingViewModel(
     ) {
         viewModelScope.launch {
             _saveState.value = SaveState.Loading
-
             val token = tokenManager.getToken()
             if (token.isNullOrBlank()) {
                 _saveState.value = SaveState.Error("登录失效，请重新登录")
                 return@launch
             }
-
             try {
                 val request = UpdateSettingRequest(
                     darkMode = darkMode,
@@ -82,13 +70,10 @@ class SettingViewModel(
                     vibrationEnabled = vibrationEnabled,
                     reminderInterval = reminderInterval
                 )
-
-                val response = RetrofitClient.authApi.updateSetting("Bearer $token", request)
-
-                if (response.code == 200) {
-                    // 保存成功，重新加载设置
+                val httpResponse = RetrofitClient.authApi.updateSetting("Bearer $token", request)
+                val body = httpResponse.body()
+                if (body?.code == 200) {
                     loadSettings()
-                    // 同步写入 DataStore 本地缓存
                     DataStoreManager(context).saveSettings(
                         darkMode = darkMode,
                         soundEnabled = soundEnabled,
@@ -97,12 +82,12 @@ class SettingViewModel(
                     )
                     _saveState.value = SaveState.Success
                 } else {
-                    _saveState.value = SaveState.Error(response.message ?: "保存失败")
+                    _saveState.value = SaveState.Error(body?.message ?: "保存失败")
                 }
             } catch (e: HttpException) {
                 val errorMsg = try {
-                    val body = e.response()?.errorBody()?.string()
-                    if (body != null) JSONObject(body).optString("message", "保存失败")
+                    val rbody = e.response()?.errorBody()?.string()
+                    if (rbody != null) JSONObject(rbody).optString("message", "保存失败")
                     else "保存失败"
                 } catch (_: Exception) { "保存失败" }
                 _saveState.value = SaveState.Error(errorMsg)
@@ -114,15 +99,9 @@ class SettingViewModel(
         }
     }
 
-    // ==================== 重置保存状态 ====================
-
     fun resetSaveState() {
         _saveState.value = SaveState.Idle
     }
-
-    // ============================================================
-    // 保存状态密封类
-    // ============================================================
 
     sealed class SaveState {
         object Idle : SaveState()

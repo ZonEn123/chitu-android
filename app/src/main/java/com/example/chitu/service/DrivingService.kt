@@ -22,6 +22,7 @@ import com.amap.api.location.AMapLocationListener
 import com.example.chitu.MainActivity
 import com.example.chitu.data.local.DataStoreManager
 import com.example.chitu.data.local.TokenManager
+import com.example.chitu.data.remote.RetrofitClient
 import com.example.chitu.data.sync.TripSyncManager
 import com.example.chitu.viewmodel.DrivingViewModel
 import kotlinx.coroutines.*
@@ -49,6 +50,11 @@ class DrivingService : Service() {
 
     private val _isDriving = MutableStateFlow(false)
     val isDriving: StateFlow<Boolean> = _isDriving.asStateFlow()
+
+    /** 当前进行中的行程 ID */
+    private var currentTripId: Long = 0L
+    private var currentClientId: String = ""
+    private val tripCreated = kotlinx.coroutines.CompletableDeferred<Long>()
 
     private val _elapsedSeconds = MutableStateFlow(0)
     val elapsedSeconds: StateFlow<Int> = _elapsedSeconds.asStateFlow()
@@ -408,6 +414,31 @@ class DrivingService : Service() {
         serviceScope.launch {
             Log.d(TAG, "保存时间戳到 DataStore: $serviceStartTime")
             dataStore.saveStartTimestamp(serviceStartTime)
+
+            // 创建进行中的行程记录（用于关联疲劳提醒）
+            try {
+                currentClientId = UUID.randomUUID().toString()
+                val db = TripLogDatabase.getInstance(this@DrivingService)
+                val uid = TokenManager(this@DrivingService).getUserId() ?: 0L
+                val initialTrip = TripLog(
+                    clientId = currentClientId,
+                    userId = uid,
+                    startTime = serviceStartTime,
+                    endTime = serviceStartTime,
+                    durationSeconds = 0,
+                    startLocation = "进行中",
+                    endLocation = "",
+                    distanceMeters = 0f,
+                    tripStatus = 0,
+                    remark = ""
+                )
+                currentTripId = db.tripLogDao().insert(initialTrip)
+                tripCreated.complete(currentTripId)
+                Log.d(TAG, "创建进行中行程, id=$currentTripId")
+            } catch (e: Exception) {
+                tripCreated.completeExceptionally(e)
+                Log.e(TAG, "创建进行中行程失败", e)
+            }
         }
 
         // 同步更新单例状态
@@ -493,9 +524,14 @@ class DrivingService : Service() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val db = TripLogDatabase.getInstance(this@DrivingService)
-                val newId = db.tripLogDao().insert(tripLog)
-                tripLog.id = newId  // 手动写回 Room 生成的 ID
-                Log.d(TAG, "✅ 行程已保存到本地数据库, id=$newId")
+                val currentUserId = TokenManager(this@DrivingService).getUserId() ?: 0L
+                val finalId = if (currentTripId > 0L) currentTripId else db.tripLogDao().insert(tripLog.copy(userId = currentUserId))
+                if (currentTripId > 0L) {
+                    val updatedTrip = tripLog.copy(id = currentTripId, userId = currentUserId)
+                    db.tripLogDao().update(updatedTrip)
+                }
+                tripLog.id = finalId
+                Log.d(TAG, "✅ 行程已保存到本地数据库, id=$finalId, userId=$currentUserId")
 
                 // 立即尝试同步到云端
                 val tokenManager = TokenManager(this@DrivingService)
@@ -556,6 +592,32 @@ class DrivingService : Service() {
     }
 
     private suspend fun sendFatigueAlert() {
+        // 如果行程记录尚未创建（竞态保护），立即创建
+        if (currentTripId == 0L) {
+            try {
+                Log.d(TAG, "sendFatigueAlert: 当前无行程ID，先行创建")
+                currentClientId = UUID.randomUUID().toString()
+                val uid = TokenManager(this@DrivingService).getUserId() ?: 0L
+                val tripLog = TripLog(
+                    clientId = currentClientId,
+                    userId = uid,
+                    startTime = serviceStartTime,
+                    endTime = System.currentTimeMillis(),
+                    durationSeconds = ((System.currentTimeMillis() - serviceStartTime) / 1000).toInt(),
+                    startLocation = "进行中",
+                    endLocation = "",
+                    distanceMeters = 0f,
+                    tripStatus = 0,
+                    remark = ""
+                )
+                val db = TripLogDatabase.getInstance(this@DrivingService)
+                currentTripId = db.tripLogDao().insert(tripLog)
+                Log.d(TAG, "sendFatigueAlert: 创建行程 id=")
+            } catch (e: Exception) {
+                Log.e(TAG, "sendFatigueAlert: 创建行程失败", e)
+            }
+        }
+
         // 从 DataStore 读取用户设置（带异常保护，防止协程崩溃导致提醒永久失效）
         var soundEnabled = 1
         var vibrationEnabled = 1
@@ -566,6 +628,18 @@ class DrivingService : Service() {
             Log.d(TAG, "提醒设置 sound=$soundEnabled vibration=$vibrationEnabled")
         } catch (e: Exception) {
             Log.e(TAG, "读取设置失败，使用默认值", e)
+        }
+
+        // 保存疲劳提醒记录到后端
+        try {
+            val tk = TokenManager(this)
+            val token = tk.getToken()
+            if (!token.isNullOrBlank()) {
+                RetrofitClient.authApi.saveReminder("Bearer $token", mapOf("reminderType" to "疲劳驾驶", "tripId" to currentTripId))
+                Log.d(TAG, "✅ 疲劳提醒已记录到云端")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "保存提醒记录到云端失败", e)
         }
 
         // 1. 震动（判断开关）

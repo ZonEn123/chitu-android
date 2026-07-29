@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
@@ -33,6 +34,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.example.chitu.R
+import com.example.chitu.data.local.DataStoreManager
 import com.example.chitu.data.local.TokenManager
 import com.example.chitu.viewmodel.DrivingViewModel
 import com.example.chitu.viewmodel.ProfileUiState
@@ -210,6 +212,7 @@ fun HomeScreen(
                         scope.launch {
                             drawerState.close()
                             tokenManager.clear()
+                            DataStoreManager(context).clearSettings()
                             navController.navigate("login") {
                                 popUpTo("home") { inclusive = true }
                             }
@@ -246,6 +249,31 @@ fun HomeScreen(
                                 tint = ChituRed,
                                 modifier = Modifier.size(28.dp)
                             )
+                        }
+                    },
+                    actions = {
+                        // 紧急联系人拨号按钮
+                        if (uiState is ProfileUiState.Success) {
+                            val profileData = (uiState as ProfileUiState.Success).data
+                            val phone = profileData.emergencyPhone
+                            if (!phone.isNullOrBlank()) {
+                                IconButton(
+                                    onClick = {
+                                        val intent = android.content.Intent(
+                                            android.content.Intent.ACTION_DIAL,
+                                            android.net.Uri.parse("tel:$phone")
+                                        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        context.startActivity(intent)
+                                    }
+                                ) {
+                                    Icon(
+                                        Icons.Default.Phone,
+                                        contentDescription = "拨打紧急联系人",
+                                        tint = ChituRed,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+                            }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(

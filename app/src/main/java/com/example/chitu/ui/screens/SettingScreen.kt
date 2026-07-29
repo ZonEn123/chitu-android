@@ -183,6 +183,17 @@ fun SettingScreen(
                 )
             }
 
+            // ===== 安全设置 =====
+            item {
+                SettingGroupHeader(title = "安全设置")
+            }
+            item {
+                SettingClickItem(
+                    title = "修改密码",
+                    onClick = { navController.navigate("security_setting") }
+                )
+            }
+
             // ===== 底部留白 =====
             item {
                 Spacer(modifier = Modifier.height(32.dp))
@@ -377,4 +388,28 @@ fun formatTime(minutes: Int): String {
     val hours = minutes / 60
     val mins = minutes % 60
     return String.format("%02d:%02d", hours, mins)
+}
+/** 可点击的菜单项（用于"修改密码"等入口） */
+@Composable
+fun SettingClickItem(
+    title: String,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() },
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(0.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(title, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
+            Text(">", fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 }

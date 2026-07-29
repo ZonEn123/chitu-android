@@ -2,12 +2,15 @@ package com.example.chitu.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -19,8 +22,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import com.example.chitu.data.local.TokenManager
 import com.example.chitu.data.local.database.TripLogDatabase
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.firstOrNull
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -34,24 +39,26 @@ fun TripListScreen(
 ) {
     val context = LocalContext.current
     val db = remember { TripLogDatabase.getInstance(context) }
-    val tripsFlow = remember { db.tripLogDao().getAllTrips() }
 
     var trips by remember { mutableStateOf<List<com.example.chitu.data.local.entity.TripLog>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
 
     var searchQuery by remember { mutableStateOf("") }
+    var statusFilter by remember { mutableIntStateOf(-1) } // -1=全部 0=进行中 1=已完成 2=异常
 
-    val filteredTrips = if (searchQuery.isBlank()) {
-        trips
-    } else {
-        trips.filter { trip ->
-            trip.startLocation.contains(searchQuery, ignoreCase = true) ||
-                    trip.endLocation.contains(searchQuery, ignoreCase = true)
-        }
+    val dateFormat = SimpleDateFormat("yyyy/MM/dd", Locale.getDefault())
+
+    val filteredTrips = trips.filter { trip ->
+        val matchSearch = searchQuery.isBlank() ||
+                trip.startLocation.contains(searchQuery, ignoreCase = true) ||
+                trip.endLocation.contains(searchQuery, ignoreCase = true)
+        val matchStatus = statusFilter == -1 || trip.tripStatus == statusFilter
+        matchSearch && matchStatus
     }
 
     LaunchedEffect(Unit) {
-        tripsFlow.collectLatest { tripList ->
+        val userId = TokenManager(context).getUserId() ?: return@LaunchedEffect
+        db.tripLogDao().getTripsByUserId(userId).collectLatest { tripList ->
             trips = tripList
             isLoading = false
         }
@@ -156,6 +163,7 @@ fun TripListScreen(
                         .padding(innerPadding)
                         .padding(horizontal = 16.dp)
                 ) {
+                    // 搜索框
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
@@ -163,7 +171,7 @@ fun TripListScreen(
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(bottom = 12.dp),
+                            .padding(bottom = 8.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = ChituRed,
                             unfocusedBorderColor = Color.Gray,
@@ -173,11 +181,7 @@ fun TripListScreen(
                             unfocusedLabelColor = Color.Gray
                         ),
                         leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.Search,
-                                contentDescription = "搜索",
-                                tint = ChituRed
-                            )
+                            Icon(Icons.Default.Search, contentDescription = "搜索", tint = ChituRed)
                         },
                         trailingIcon = {
                             if (searchQuery.isNotEmpty()) {
@@ -188,12 +192,44 @@ fun TripListScreen(
                         }
                     )
 
-                    Text(
-                        text = "共 ${filteredTrips.size} 条行程",
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
+                    // 状态筛选
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(bottom = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf(-1 to "全部", 0 to "进行中", 1 to "已完成", 2 to "异常").forEach { (value, label) ->
+                            FilterChip(
+                                selected = statusFilter == value,
+                                onClick = { statusFilter = value },
+                                label = { Text(label, fontSize = 13.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = ChituRed.copy(alpha = 0.15f),
+                                    selectedLabelColor = ChituRed
+                                )
+                            )
+                        }
+                    }
+
+                    // 结果计数
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "共 ${filteredTrips.size} 条行程",
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                        if (statusFilter != -1 || searchQuery.isNotEmpty()) {
+                            TextButton(onClick = { statusFilter = -1; searchQuery = "" }) {
+                                Text("重置筛选", color = ChituRed, fontSize = 13.sp)
+                            }
+                        }
+                    }
 
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),

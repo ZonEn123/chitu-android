@@ -8,7 +8,12 @@ import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
 
 object RetrofitClient {
+    //iqqo13
     private const val BASE_URL = "http://10.210.221.165:8080/"
+
+    //redmi80pro
+    //private const val BASE_URL = "http://10.255.201.165:8080/"
+
 
     private val loggingInterceptor = HttpLoggingInterceptor().apply {
         level = HttpLoggingInterceptor.Level.BODY

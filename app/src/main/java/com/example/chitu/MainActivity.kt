@@ -48,8 +48,12 @@ class MainActivity : ComponentActivity() {
             val settings by settingViewModel.settings.collectAsState()
             val darkMode = settings?.darkMode ?: 0
 
-            LaunchedEffect(Unit) {
-                settingViewModel.loadSettings()
+            // 监听 Token 变化，切换用户时重新加载设置
+            val token by tokenManager.getTokenFlow().collectAsState(initial = null)
+            LaunchedEffect(token) {
+                if (token != null) {
+                    settingViewModel.loadSettings()
+                }
             }
 
             ChituTheme(darkMode = darkMode) {
@@ -75,6 +79,7 @@ class MainActivity : ComponentActivity() {
                     // 注册登录页面
                     composable("login") {
                         LoginScreen(
+                            navController = navController,
                             onLoginSuccess = {
                                 navController.navigate("home") {
                                     popUpTo("login") { inclusive = true }
@@ -102,6 +107,14 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         )
+                    }
+
+                    // 安全模块：忘记密码流程
+                    composable("forgot_password") {
+                        ForgotPasswordScreen(navController = navController)
+                    }
+                    composable("security_setting") {
+                        SecuritySettingScreen(navController = navController)
                     }
 
                     // 注册首页页面

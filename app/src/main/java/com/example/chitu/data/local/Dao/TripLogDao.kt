@@ -38,6 +38,10 @@ interface TripLogDao {
     @Query("SELECT * FROM trip_log WHERE syncStatus IN (0, 2) ORDER BY startTime ASC")
     suspend fun getUnsyncedTrips(): List<TripLog>
 
+    // 按用户查询行程（用户数据隔离）
+    @Query("SELECT * FROM trip_log WHERE userId = :userId ORDER BY startTime DESC")
+    fun getTripsByUserId(userId: Long): Flow<List<TripLog>>
+
     @Query("SELECT * FROM trip_log ORDER BY startTime DESC")
     fun getAllTrips(): Flow<List<TripLog>>
 

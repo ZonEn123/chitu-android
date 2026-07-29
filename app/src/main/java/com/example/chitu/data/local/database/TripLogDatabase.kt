@@ -11,7 +11,7 @@ import com.example.chitu.data.local.entity.TripLog
 
 @Database(
     entities = [TripLog::class],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class TripLogDatabase : RoomDatabase() {
@@ -39,6 +39,13 @@ abstract class TripLogDatabase : RoomDatabase() {
             }
         }
 
+        // Migration：从版本3升级到版本4（新增 userId 字段）
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE trip_log ADD COLUMN userId INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         @Volatile
         private var INSTANCE: TripLogDatabase? = null
 
@@ -49,7 +56,7 @@ abstract class TripLogDatabase : RoomDatabase() {
                     TripLogDatabase::class.java,
                     "trip_log_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                 INSTANCE = instance
                 instance

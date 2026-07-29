@@ -100,4 +100,14 @@ class DataStoreManager(private val context: Context) {
             preferences[VIBRATION_ENABLED_KEY] ?: 1
         }.first()
     }
+
+    /** 清除用户设置缓存（退出登录时调用），保留 startTimestamp 用于驾驶恢复 */
+    suspend fun clearSettings() {
+        context.dataStore.edit { preferences ->
+            preferences.remove(DARK_MODE_KEY)
+            preferences.remove(SOUND_ENABLED_KEY)
+            preferences.remove(VIBRATION_ENABLED_KEY)
+            preferences.remove(REMINDER_INTERVAL_KEY)
+        }
+    }
 }

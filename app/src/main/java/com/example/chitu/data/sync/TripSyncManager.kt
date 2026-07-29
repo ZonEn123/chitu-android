@@ -47,15 +47,16 @@ class TripSyncManager(private val context: Context) {
                 )
 
                 val response = RetrofitClient.authApi.syncTrip("Bearer $token", request)
+                val apiBody = response.body()
 
-                if (response.code == 200) {
+                if (response.isSuccessful && apiBody?.code == 200) {
                     // 同步成功，更新本地状态
                     db.tripLogDao().updateSyncStatus(trip.id, 1)
                     Log.d(TAG, "✅ 行程 ${trip.id} 同步成功")
                     true
                 } else {
                     db.tripLogDao().updateSyncStatus(trip.id, 2)
-                    Log.e(TAG, "❌ 行程 ${trip.id} 同步失败: ${response.message}")
+                    Log.e(TAG, "❌ 行程 ${trip.id} 同步失败: ${apiBody?.message ?: response.message()}")
                     false
                 }
 

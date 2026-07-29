@@ -8,6 +8,9 @@ data class TripLog(
     @PrimaryKey(autoGenerate = true)
     var id: Long = 0,
 
+    // 用户ID（用于用户数据隔离）
+    val userId: Long = 0,
+
     // 客户端唯一ID（幂等同步用）
     val clientId: String = "",
 
