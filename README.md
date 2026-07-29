@@ -233,10 +233,9 @@ git clone https://github.com/ZonEn123/chitu-android.git
 
 | 首页驾驶 | 行程列表 | 驾驶统计 |
 |:---------|:---------|:---------|
-| <!-- 待上传 --> | <!-- 待上传 --> | <!-- 待上传 --> |
+| <img src="docs/screenshots/首页驾驶.jpg" width="240"> | <img src="docs/screenshots/行程列表.jpg" width="240"> | <img src="docs/screenshots/驾驶统计.jpg" width="240"> |
 | **系统设置** | **服务区查询** | **登录页** |
-| <!-- 待上传 --> | <!-- 待上传 --> | <!-- 待上传 --> |
-
+| <img src="docs/screenshots/系统设置.jpg" width="240"> | <img src="docs/screenshots/服务区查询.jpg" width="240"> | <img src="docs/screenshots/登录页.jpg" width="240"> |
 ---
 
 ## 📁 项目规模
